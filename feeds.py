@@ -24,11 +24,11 @@ htmlParser.unicode_snob = True
 IMAGE_PATTERN = re.compile(r"<img.*?src='(.*)'.*?>")
 
 DATETIME_MASTER_PATTERN = re.compile(
-    r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[, ]? ?(?P<year>\d{4})?)(?:(?:[., ]| at| from) ?)(?P<time>(?P<hour>\d{1,2}):(?P<minute>\d{2})(?:[APap]\.?[Mm]\.?)? \(?(?P<zone>[A-Z]{3,4})?\)?)?')
+    r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[, ]? ?(?P<year>\d{4})?)(?:(?:[., ]| at| from) ?)(?P<time>(?P<hour>\d{1,2}):(?P<minute>\d{2})(?: ?(?P<ampm>[APap])\.?[Mm]\.?)? ?\(?(?P<zone>[A-Z]{3,4})?\)?)?')
 DATETIME_LIST_PATTERN = re.compile(
-    r'(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2}): (?P<times>(?:\d{1,2}:\d{2}(?:[AaPp]\.?[Mm]\.?)? \(?[A-Z]{3,4}\),? ?)+)')
+    r'(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2}): (?P<times>(?:\d{1,2}:\d{2}(?: ?(?P<ampm>[APap])\.?[Mm]\.?)? \(?[A-Z]{3,4}\),? ?)+)')
 TIME_PATTERN = re.compile(
-    r'(?P<hour>\d{1,2}):(?P<minute>\d{2})(?:[AaPp]\.?[Mm]\.?)?(?: \(?[A-Z]{3,4}\))?,? ?')
+    r'(?P<hour>\d{1,2}):(?P<minute>\d{2})(?: ?(?P<ampm>[APap])\.?[Mm]\.?)?(?: \(?[A-Z]{3,4}\))?,? ?')
 
 NEWS_COLOR_MAP = {
     'bug': 10066329,
@@ -42,14 +42,6 @@ NEWS_COLOR_MAP = {
 
 with open('log.json', 'r') as f:
     feedLogs = json.load(f)
-
-
-@dataclass
-class PostArgs:
-    content: str | None = None
-    username: str | None = None
-    avatar_url: str | None = None
-    embeds: list[dict] | None = None
 
 
 class DictObj:
@@ -66,6 +58,7 @@ class DictObj:
 
 class FeedEntry(DictObj):
     id: int
+    startAt: int = 0
 
     def __init__(self, in_dict: dict):
         super().__init__(in_dict)
@@ -99,36 +92,37 @@ class NewsEntry(FeedEntry):
             self.urlPath = config.INFO_BASE_URL + self.path
             self.htmlPath = config.INFO_HTML_URL + \
                 self.path[self.path.find('?id=')+4:] + '.html'
+            
+    def __repr__(self) -> str:
+        return self.title
 
     def build_post(self):
-        return asdict(PostArgs(
-            content='New in-game news posted!',
-            embeds=[
-                {
-                    "title": self.title,
-                    "description": self.get_body() if self.browseType == 'internal' else None,
-                    "url": self.urlPath if self.urlPath else self.path,
-                    "image": {"url": self.imageURL},
-                    "color": NEWS_COLOR_MAP.get(self.informationTag, None)
-                }
-            ]
-        ))
+        post = {
+            'content': 'New in-game news posted!',
+            'embeds': [self.build_embed()]
+        }
+        return post
 
     def build_embed(self):
-        return {
+        embed = {
             "title": self.title,
             "description": self.get_body() if self.browseType == 'internal' else None,
             "url": self.urlPath if self.urlPath else self.path,
-            "image": {"url": self.imageURL},
             "color": NEWS_COLOR_MAP.get(self.informationTag, None)
         }
+        if self.imageURL:
+            embed["image"] = {"url": self.imageURL}
+        if len(embed['description']) > 4096:
+            embed['description'] = embed['description'][:4093] + '...'
+            embed['footer'] = {'text': 'Announcement is too long for discord, click the title to see the full post'}
+        return embed
 
     def get_body(self):
         resp = requests.get(self.htmlPath)
         resp.encoding = 'utf-8'
         text = htmlParser.handle(resp.text)
         self.process_images(IMAGE_PATTERN.findall(text))
-        text = text.replace('* * *', '').replace('\n-', '\n* ')
+        text = text.replace('* * *', '').replace('\n-', '\n* ').replace('\n■', '\n## ■')
         text = re.sub(IMAGE_PATTERN, '', text)
         text = self.process_datetimes(text)
         return text
@@ -186,10 +180,7 @@ class Feed:
     githubPath: str
 
     webhook: Discord
-
-    lastChecked: float = 0
     posted: list[int] = []
-    lastModified: float = 0
 
     entryType = FeedEntry
     feed: list[FeedEntry] = []
@@ -208,51 +199,38 @@ class Feed:
             print(f'No log found for feed {self.name}, using default values')
             return
 
-        self.lastChecked = feedLogs[self.name]['lastChecked']
         self.posted = feedLogs[self.name]['posted']
 
     def get_feed(self):
         contents = repo.get_contents(path=self.githubPath)
-        self.lastModified = datetime.strptime(
-            contents.last_modified, r'%a, %d %b %Y %H:%M:%S %Z').timestamp()
-
-        if self.lastModified > self.lastChecked or True:
-            feed = self.parse_feed(json.loads(contents.decoded_content))
-        else:
-            print(f'Skipping feed {self.name}. File has not been modified.')
-            feed = []
-
-        self.lastChecked = datetime.now().timestamp()
-        return feed
+        return self.parse_feed(json.loads(contents.decoded_content))
 
     def parse_feed(self, feed: list):
         return [self.entryType(entry) for entry in feed]
 
-    def post_feed(self, perPost: int = 10):
-        toPost = [e for e in self.feed if e.id not in self.posted]
-        while len(toPost) > 0:
-            self.post(toPost[:perPost])
-            toPost = toPost[perPost:]
-            sleep(5)
+    def post_feed(self, maxPosts: int = 3):
+        postCount = 0
+        for entry in [e for e in self.feed if e.id not in self.posted and e.startAt/1000 <= datetime.now().timestamp()]:
+            if postCount >= maxPosts:
+                break
+
+            self.post(entry)
+            postCount += 1
+            sleep(1)
+
+        self.write_logs()
 
     def write_logs(self):
         feedLogs[self.name] = {
-            'lastChecked': self.lastChecked,
             'posted': self.posted
         }
 
-    def post(self, entries: list[FeedEntry]):
-        # try:
-            post = asdict(PostArgs(
-                content='New in-game news posted!',
-                embeds=[e.build_embed() for e in entries]
-            ))
-            self.webhook.post(**post)
-            self.posted.extend([e.id for e in entries])
-            self.write_logs()
-        # except Exception as x:
-        #     print(f'Failed to post entries:', [e.id for e in entries])
-        #     print(x)
+    def post(self, entry: FeedEntry):
+        try:
+            self.webhook.post(**entry.build_post()).raise_for_status()
+            self.posted.append(entry.id)
+        except Exception as e:
+            print(f'Failed to post entry {entry.id}', e)
 
 
 class NewsFeed(Feed):
@@ -289,13 +267,15 @@ class DateHandler:
     def handle_single(match: re.Match):
         try:
             data = {
-                'month': DateHandler.MONTH_MAP.get(match.group('month')[:3], 1) if match.group('month') else datetime.now().month,
-                'day': int(match.group('day')) if match.group('day') else 1,
+                'month': DateHandler.MONTH_MAP.get(match.group('month')[:3], None) if match.group('month') else datetime.now().month,
+                'day': int(match.group('day')) if match.group('day') else None,
                 'year': int(match.group('year')) if match.group('year') else datetime.now().year,
                 'hour': int(match.group('hour')) if match.group('hour') else 0,
                 'minute': int(match.group('minute')) if match.group('minute') else 0,
                 'second': 0
             }
+            if match.group('ampm') in ['p', 'P'] and data['hour'] < 12:
+                data['hour'] += 12
             dt = DateHandler.timezone_converter(
                 datetime(**data), config.REGION_TIME_ZONE)
             return DateHandler.make_timestamp(dt)
