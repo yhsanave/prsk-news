@@ -22,7 +22,7 @@ htmlParser.body_width = 0
 IMAGE_PATTERN = re.compile(r"<img.*?src='(.*)'.*?>")
 
 DATETIME_MASTER_PATTERN = re.compile(
-    r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[,: ]? ?(?P<year>\d{4})?)(?:(?:[.,]| at) ?)(?P<time>(?P<hour>\d{2}):(?P<minute>\d{2})(?:[AP]M)? \(?(?P<zone>[A-Z]{3,4})\)?)?')
+    r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[,: ]? ?(?P<year>\d{4})?)(?:(?:[.,]| at| from) ?)(?P<time>(?P<hour>\d{2}):(?P<minute>\d{2})(?:[AP]M)? \(?(?P<zone>[A-Z]{3,4})\)?)?')
 DATETIME_LIST_PATTERN = re.compile(
     r'(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2}): (?P<times>(?:\d{2}:\d{2}(?:[AP]M)? \(?[A-Z]{3,4}\),? ?)+)')
 TIME_PATTERN = re.compile(
