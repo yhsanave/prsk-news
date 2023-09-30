@@ -2,6 +2,7 @@ from discordwebhook import Discord
 from github import Github, Auth
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from time import sleep
 import html2text
 import requests
 import config
@@ -18,15 +19,16 @@ htmlParser.single_line_break = True
 htmlParser.protect_links = True
 htmlParser.images_as_html = True
 htmlParser.body_width = 0
+htmlParser.unicode_snob = True
 
 IMAGE_PATTERN = re.compile(r"<img.*?src='(.*)'.*?>")
 
 DATETIME_MASTER_PATTERN = re.compile(
-    r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[,: ]? ?(?P<year>\d{4})?)(?:(?:[.,]| at| from) ?)(?P<time>(?P<hour>\d{2}):(?P<minute>\d{2})(?:[AP]M)? \(?(?P<zone>[A-Z]{3,4})\)?)?')
+    r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[, ]? ?(?P<year>\d{4})?)(?:(?:[., ]| at| from) ?)(?P<time>(?P<hour>\d{1,2}):(?P<minute>\d{2})(?:[APap]\.?[Mm]\.?)? \(?(?P<zone>[A-Z]{3,4})?\)?)?')
 DATETIME_LIST_PATTERN = re.compile(
-    r'(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2}): (?P<times>(?:\d{2}:\d{2}(?:[AP]M)? \(?[A-Z]{3,4}\),? ?)+)')
+    r'(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2}): (?P<times>(?:\d{1,2}:\d{2}(?:[AaPp]\.?[Mm]\.?)? \(?[A-Z]{3,4}\),? ?)+)')
 TIME_PATTERN = re.compile(
-    r'(?P<hour>\d{2}):(?P<minute>\d{2})(?:[AP]M)?(?: \(?[A-Z]{3,4}\))?,? ?')
+    r'(?P<hour>\d{1,2}):(?P<minute>\d{2})(?:[AaPp]\.?[Mm]\.?)?(?: \(?[A-Z]{3,4}\))?,? ?')
 
 NEWS_COLOR_MAP = {
     'bug': 10066329,
@@ -71,6 +73,9 @@ class FeedEntry(DictObj):
     def build_post(self):
         raise NotImplementedError
 
+    def build_embed(self):
+        raise NotImplementedError
+
 
 class NewsEntry(FeedEntry):
     id: int
@@ -109,12 +114,21 @@ class NewsEntry(FeedEntry):
             ]
         ))
 
+    def build_embed(self):
+        return {
+            "title": self.title,
+            "description": self.get_body() if self.browseType == 'internal' else None,
+            "url": self.urlPath if self.urlPath else self.path,
+            "image": {"url": self.imageURL},
+            "color": NEWS_COLOR_MAP.get(self.informationTag, None)
+        }
+
     def get_body(self):
-        raw = requests.get(self.htmlPath)
-        text = htmlParser.handle(raw.text)
+        resp = requests.get(self.htmlPath)
+        resp.encoding = 'utf-8'
+        text = htmlParser.handle(resp.text)
         self.process_images(IMAGE_PATTERN.findall(text))
-        text = text.replace('â', '## ■').replace(
-            '* * *', '').replace('â', '★').replace('â¢', '* ').replace('\n-', '\n* ')
+        text = text.replace('* * *', '').replace('\n-', '\n* ')
         text = re.sub(IMAGE_PATTERN, '', text)
         text = self.process_datetimes(text)
         return text
@@ -214,16 +228,12 @@ class Feed:
     def parse_feed(self, feed: list):
         return [self.entryType(entry) for entry in feed]
 
-    def post_feed(self, maxPosts: int = 1):
-        postCount = 0
-        for entry in [e for e in self.feed if e.id not in self.posted]:
-            if postCount >= maxPosts:
-                break
-
-            self.post(entry)
-            postCount += 1
-
-        self.write_logs()
+    def post_feed(self, perPost: int = 10):
+        toPost = [e for e in self.feed if e.id not in self.posted]
+        while len(toPost) > 0:
+            self.post(toPost[:perPost])
+            toPost = toPost[perPost:]
+            sleep(5)
 
     def write_logs(self):
         feedLogs[self.name] = {
@@ -231,12 +241,18 @@ class Feed:
             'posted': self.posted
         }
 
-    def post(self, entry: FeedEntry):
-        try:
-            self.webhook.post(**entry.build_post())
-            self.posted.append(entry.id)
-        except Exception as e:
-            print(f'Failed to post entry {entry.id}', e)
+    def post(self, entries: list[FeedEntry]):
+        # try:
+            post = asdict(PostArgs(
+                content='New in-game news posted!',
+                embeds=[e.build_embed() for e in entries]
+            ))
+            self.webhook.post(**post)
+            self.posted.extend([e.id for e in entries])
+            self.write_logs()
+        # except Exception as x:
+        #     print(f'Failed to post entries:', [e.id for e in entries])
+        #     print(x)
 
 
 class NewsFeed(Feed):
@@ -271,17 +287,20 @@ class DateHandler:
     }
 
     def handle_single(match: re.Match):
-        data = {
-            'month': DateHandler.MONTH_MAP.get(match.group('month')[:3], None) if match.group('month') else datetime.now().month,
-            'day': int(match.group('day')) if match.group('day') else 1,
-            'year': int(match.group('year')) if match.group('year') else datetime.now().year,
-            'hour': int(match.group('hour')) if match.group('hour') else 0,
-            'minute': int(match.group('minute')) if match.group('minute') else 0,
-            'second': 0
-        }
-        dt = DateHandler.timezone_converter(
-            datetime(**data), config.REGION_TIME_ZONE)
-        return DateHandler.make_timestamp(dt)
+        try:
+            data = {
+                'month': DateHandler.MONTH_MAP.get(match.group('month')[:3], 1) if match.group('month') else datetime.now().month,
+                'day': int(match.group('day')) if match.group('day') else 1,
+                'year': int(match.group('year')) if match.group('year') else datetime.now().year,
+                'hour': int(match.group('hour')) if match.group('hour') else 0,
+                'minute': int(match.group('minute')) if match.group('minute') else 0,
+                'second': 0
+            }
+            dt = DateHandler.timezone_converter(
+                datetime(**data), config.REGION_TIME_ZONE)
+            return DateHandler.make_timestamp(dt)
+        except:
+            return match.group(0)
 
     def handle_list(match: re.Match):
         data = {
