@@ -1,7 +1,6 @@
 from discordwebhook import Discord
 from github import Github, Auth
 from datetime import datetime
-from dataclasses import dataclass, asdict
 from time import sleep
 import html2text
 import requests
@@ -41,8 +40,11 @@ NEWS_COLOR_MAP = {
 }
 
 with open('log.json', 'r') as f:
-    feedLogs = json.load(f)
-
+    try:
+        feedLogs = json.load(f)
+    except FileNotFoundError:
+        print('Log file not found, creating a new one.')
+        feedLogs = {}
 
 class DictObj:
     def __init__(self, in_dict: dict):
