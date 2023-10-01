@@ -210,7 +210,7 @@ class Feed:
     def parse_feed(self, feed: list):
         return [self.entryType(entry) for entry in feed]
 
-    def post_feed(self, maxPosts: int = 3):
+    def post_feed(self, maxPosts: int = 10, postDelay: int = 5):
         postCount = 0
         for entry in [e for e in self.feed if e.id not in self.posted and e.startAt/1000 <= datetime.now().timestamp()]:
             if postCount >= maxPosts:
@@ -218,7 +218,7 @@ class Feed:
 
             self.post(entry)
             postCount += 1
-            sleep(1)
+            sleep(postDelay)
 
         self.write_logs()
 
