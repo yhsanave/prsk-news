@@ -14,3 +14,6 @@ REGION_TIME_ZONE = r'US/Pacific'
 G_NEWS_PATH = r'userInformations.json'
 G_EVENT_PATH = r'events.json'
 G_GACHA_PATH = r'gachas.json'
+
+# Discord Server Settings
+D_MENTION_ROLE_ID = ''

@@ -48,6 +48,8 @@ with open('log.json', 'r') as f:
         print('Log file not found, creating a new one.')
         feedLogs = {}
 
+def mention_role():
+    return f'<@&{config.D_MENTION_ROLE_ID}> ' if config.D_MENTION_ROLE_ID else ''
 
 class DictObj:
     def __init__(self, in_dict: dict):
@@ -103,7 +105,7 @@ class NewsEntry(FeedEntry):
 
     def build_post(self):
         post = {
-            'content': f'New in-game news posted <t:{int(self.startAt/1000)}:R>!',
+            'content': f'{mention_role()}New in-game news posted <t:{int(self.startAt/1000)}:R>!',
             'embeds': [self.build_embed()]
         }
         return post
