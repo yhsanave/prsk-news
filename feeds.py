@@ -2,6 +2,7 @@ from discordwebhook import Discord
 from github import Github, Auth
 from datetime import datetime
 from time import sleep
+from urllib.parse import quote_plus
 import html2text
 import requests
 import config
@@ -45,6 +46,7 @@ with open('log.json', 'r') as f:
     except FileNotFoundError:
         print('Log file not found, creating a new one.')
         feedLogs = {}
+
 
 class DictObj:
     def __init__(self, in_dict: dict):
@@ -94,13 +96,13 @@ class NewsEntry(FeedEntry):
             self.urlPath = config.INFO_BASE_URL + self.path
             self.htmlPath = config.INFO_HTML_URL + \
                 self.path[self.path.find('?id=')+4:] + '.html'
-            
+
     def __repr__(self) -> str:
         return self.title
 
     def build_post(self):
         post = {
-            'content': 'New in-game news posted!',
+            'content': f'New in-game news posted <t:{int(self.startAt/1000)}:R>!',
             'embeds': [self.build_embed()]
         }
         return post
@@ -109,14 +111,15 @@ class NewsEntry(FeedEntry):
         embed = {
             "title": self.title,
             "description": self.get_body() if self.browseType == 'internal' else None,
-            "url": self.urlPath if self.urlPath else self.path,
+            "url": quote_plus(self.urlPath if self.urlPath else self.path, safe='/:?=&'),
             "color": NEWS_COLOR_MAP.get(self.informationTag, None)
         }
         if self.imageURL:
             embed["image"] = {"url": self.imageURL}
         if len(embed['description']) > 4096:
             embed['description'] = embed['description'][:4093] + '...'
-            embed['footer'] = {'text': 'Announcement is too long for discord, click the title to see the full post'}
+            embed['footer'] = {
+                'text': 'Announcement is too long for discord, click the title to see the full post'}
         return embed
 
     def get_body(self):
@@ -124,7 +127,8 @@ class NewsEntry(FeedEntry):
         resp.encoding = 'utf-8'
         text = htmlParser.handle(resp.text)
         self.process_images(IMAGE_PATTERN.findall(text))
-        text = text.replace('* * *', '').replace('\n-', '\n* ').replace('\n■', '\n## ■')
+        text = text.replace('* * *', '').replace('\n-',
+                                                 '\n* ').replace('\n■', '\n## ■')
         text = re.sub(IMAGE_PATTERN, '', text)
         text = self.process_datetimes(text)
         return text
@@ -312,5 +316,14 @@ if __name__ == '__main__':
     news = NewsFeed(webhookUrl=config.D_NEWS_WEBHOOK,
                     githubPath=config.G_NEWS_PATH)
     news.post_feed()
+
+    # events = EventFeed(webhookUrl=config.D_EVENT_WEBHOOK,
+    #                    githubPath=config.G_EVENT_PATH)
+    # events.post_feed()
+
+    # gacha = GachaFeed(webhookUrl=config.D_GACHA_WEBHOOK,
+    #                   githubPath=config.G_GACHA_PATH)
+    # events.post_feed()
+
     with open('log.json', 'w') as f:
         json.dump(feedLogs, f)
