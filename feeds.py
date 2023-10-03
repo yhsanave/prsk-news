@@ -22,6 +22,7 @@ htmlParser.body_width = 0
 htmlParser.unicode_snob = True
 
 IMAGE_PATTERN = re.compile(r"<img.*?src='(.*)'.*?>")
+MULTI_BREAK_PATTERN = re.compile(r'\n( *\n+)+')
 
 DATETIME_MASTER_PATTERN = re.compile(
     r'(?P<date>(?P<month>[A-Z][a-z]+)\.? (?P<day>\d{1,2})[, ]? ?(?P<year>\d{4})?)(?:(?:[., ]| at| from) ?)(?P<time>(?P<hour>\d{1,2}):(?P<minute>\d{2})(?: ?(?P<ampm>[APap])\.?[Mm]\.?)? ?\(?(?P<zone>[A-Z]{3,4})?\)?)?')
@@ -128,8 +129,9 @@ class NewsEntry(FeedEntry):
         text = htmlParser.handle(resp.text)
         self.process_images(IMAGE_PATTERN.findall(text))
         text = text.replace('* * *', '').replace('\n-',
-                                                 '\n* ').replace('\n■', '\n## ■')
+                                                 '\n* ').replace('\n■', '\n## ■ ')
         text = re.sub(IMAGE_PATTERN, '', text)
+        text = re.sub(MULTI_BREAK_PATTERN, '\n\n', text)
         text = self.process_datetimes(text)
         return text
 
